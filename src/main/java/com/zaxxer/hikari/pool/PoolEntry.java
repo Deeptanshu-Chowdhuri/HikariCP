@@ -21,6 +21,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.sql.Connection;
+import java.sql.DatabaseMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.concurrent.ScheduledFuture;
@@ -78,6 +79,17 @@ final class PoolEntry implements IConcurrentBagEntry
    {
       if (connection != null) {
          this.lastAccessed = currentTime();
+         try {
+            DatabaseMetaData dm = connection.getMetaData();
+            if (dm!=null){
+               if (dm.getJDBCMajorVersion() > 4 ||
+                  (dm.getJDBCMajorVersion() == 4 && dm.getJDBCMinorVersion() >= 3)) {
+                  connection.endRequest();
+               }
+            }
+         } catch (SQLException e) {
+            LOGGER.warn("endRequest Failed for: {},({})",connection,e.getMessage());
+         }
          hikariPool.recycle(this);
       }
    }
@@ -98,7 +110,19 @@ final class PoolEntry implements IConcurrentBagEntry
 
    Connection createProxyConnection(final ProxyLeakTask leakTask)
    {
-      return ProxyFactory.getProxyConnection(this, connection, openStatements, leakTask, isReadOnly, isAutoCommit);
+      Connection newproxyconn= ProxyFactory.getProxyConnection(this, connection, openStatements, leakTask, isReadOnly, isAutoCommit);
+      try {
+         DatabaseMetaData dm=connection.getMetaData();
+         if (dm!=null){
+            if (dm.getJDBCMajorVersion() > 4 ||
+               (dm.getJDBCMajorVersion() == 4 && dm.getJDBCMinorVersion() >= 3)) {
+               connection.beginRequest();
+            }
+         }
+      } catch (SQLException e) {
+         LOGGER.warn("beginRequest Failed for: {}, ({})",connection,e.getMessage());
+      }
+      return newproxyconn;
    }
 
    void resetConnectionState(final ProxyConnection proxyConnection, final int dirtyBits) throws SQLException
